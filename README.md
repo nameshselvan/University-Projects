@@ -13,6 +13,7 @@ R · Excel · Tableau · Power BI
 Explore my university projects covering financial analysis, risk management, data science, visualisation and business strategy.
 
 [Browse all project reports](Projects/)
+
 [Browse Excel models, R code and interactive visualisations](Supporting-Files/)
 
 ## Areas of Focus
