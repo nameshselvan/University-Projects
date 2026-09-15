@@ -10,7 +10,9 @@ R · Excel · Tableau · Power BI
 
 ## Projects
 
-Projects will be organised into individual folders, with an overview of the business problem, methods used, key findings and supporting files.
+Explore my university projects covering financial analysis, risk management, data science, visualisation and business strategy.
+
+[Browse all project reports](Projects/)
 
 ## Areas of Focus
 
