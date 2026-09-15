@@ -1,0 +1,441 @@
+---
+title: "COMP7024 Programming for Data Science Assignment :           Data-Driven Analytics
+  for a UK-Based Online Retailer"
+author: "Namesh Panneer Selvan (22148363)"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse) 
+library(kableExtra)
+```
+
+# Declaration
+
+By including this statement, we the authors of this work, verify that:
+
+- We hold a copy of this assignment that we can produce if the original is lost or
+damaged.
+- We hereby certify that no part of this assignment/product has been copied from
+any other student’s work or from any other source except where due acknowledgement
+is made in the assignment.
+- No part of this assignment/product has been written/produced for us by another
+person except where such collaboration has been authorised by the subject lecturer/
+tutor concerned.
+- We are aware that this work may be reproduced and submitted to plagiarism detection
+software programs for the purpose of detecting possible plagiarism (which
+may retain a copy on its database for future plagiarism checking).
+- We hereby certify that we have read and understand what the School of Computing,
+Engineering and Mathematics defines as minor and substantial breaches
+of misconduct as outlined in the learning guide for this unit.
+
+# Introduction 
+
+The report highlights a data-driven analysis for a UK-based online retailer using transaction and product information datasets. The study is structured around four key areas: product revenue performance, identification of high-value customers, global market trends across countries, and monthly sales patterns over time. As outlined in the assessment guidelines, cancelled transactions are excluded where invoice number begins with "C", revenue is calculated as [Quantity * UnitPrice], and product descriptions are merged into the transaction dataset using StockCode. The analysis is conducted in R using reproducible code and version control practices through Git.
+
+# Data Loading  
+
+```{r}
+# Load data ("project_orders" & "project_product_info")
+
+orders <- read.csv("project_orders.csv")
+products <- read.csv("project_product_info.csv")
+
+# Quick checks of the data
+
+head(orders)
+head(products)
+
+str(orders)
+str(products)
+```
+
+# Data Preparation 
+
+```{r}
+# Remove cancelled transactions where InvoiceNo starts with "C"
+
+library(tidyverse)
+library(knitr)
+
+orders_clean <- orders %>%
+  filter(!startsWith(InvoiceNo, "C"))
+
+# Check rows removed
+
+nrow(orders)
+nrow(orders_clean)
+
+# Join product descriptions into the orders table using StockCode and create revenue variable
+ 
+retail_data <- orders_clean %>%
+  left_join(products, by = "StockCode") %>%
+  mutate(
+    Revenue = Quantity * UnitPrice
+  )
+
+head(retail_data)
+
+# Convert InvoiceDate to date format
+
+retail_data$InvoiceDate <- as.POSIXct(
+  retail_data$InvoiceDate,
+  format="%d/%m/%Y %H:%M"
+)
+
+str(retail_data$InvoiceDate)
+
+# Check the joined and cleaned dataset
+
+head(retail_data)
+summary(retail_data$Revenue)
+
+# Data quality check 
+
+sum(is.na(retail_data$Description))
+sum(is.na(retail_data$CustomerID))
+sum(duplicated(products$StockCode))
+```
+## Comments on data preparation
+
+Even after removing cancelled invoices, the cleaned dataset still has some negative revenue values (-11062.06), likely due to returned items or credit adjustments not captured solely by the invoice prefix rule.
+
+# Analytical Task Description
+
+The following section presents a detailed analysis provided using R on the transactional data from the UK-based online retailer. As mentioned in the introduction of the report the analysis is focused around evaluating the product performance, customer behaviour, global sales patterns and monthly revenue trends using analytical methods.
+
+# Question 1: Product Revenue Analysis
+
+## Explanation
+
+The task focuses on analysing the performance of the product by calculating the total revenue generate by each product. The product of quantity and unit price for each transaction is the total revenue generated.The highest and lowest performing product is determined by aggregating revenues at product level.
+
+## Code
+
+```{r}
+# Total revenue calculation at product level
+
+product_revenue <- retail_data %>%
+  group_by(StockCode, Description) %>%
+  summarise(
+    TotalRevenue = sum(Revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(TotalRevenue))
+
+# Top 10 highest revenue products
+
+top10_products <- product_revenue %>%
+  slice_max(order_by = TotalRevenue, n = 10, with_ties = FALSE)
+
+# Bottom 10 lowest revenue products
+
+bottom10_products <- product_revenue %>%
+  slice_min(order_by = TotalRevenue, n = 10, with_ties = FALSE)
+
+# Top 3 products
+
+top3_products <- product_revenue %>%
+  slice_max(order_by = TotalRevenue, n = 3)
+
+# Contribution by top 3 products
+
+total_revenue_all <- sum(product_revenue$TotalRevenue)
+
+top3_contribution <- top3_products %>%
+  summarise(
+    Top3Revenue = sum(TotalRevenue),
+    ContributionPercent = (sum(TotalRevenue) / total_revenue_all) * 100
+  )
+
+# Display results
+
+top10_products
+bottom10_products
+top3_products
+top3_contribution
+```
+
+## Visualisation 
+
+```{r}
+# Top 10 products by revenue 
+
+ggplot(top10_products,
+       aes(x = reorder(Description, TotalRevenue),
+           y = TotalRevenue)) +
+  geom_col(fill = "lightblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Products by Revenue",
+    x = "Product Description",
+    y = "Total Revenue"
+  )
+
+# Bottom 10 products by revenue
+
+ggplot(bottom10_products,
+       aes(x = reorder(Description, TotalRevenue),
+           y = TotalRevenue)) +
+  geom_col(fill = "orange") +
+  coord_flip() +
+  labs(
+    title = "Bottom 10 Products by Revenue",
+    x = "Product Description",
+    y = "Total Revenue"
+  )
+
+# Revenue share of top product 
+
+top10_products <- top10_products %>%
+  mutate(
+    Share = (TotalRevenue / total_revenue_all) * 100
+  )
+
+ggplot(top10_products,
+       aes(x = reorder(Description, Share),
+           y = Share)) +
+  geom_col(fill = "lightgreen") +
+  coord_flip() +
+  labs(
+    title = "Revenue Share of Top Products",
+    x = "Product",
+    y = "Percentage of Total Revenue"
+  )
+```
+
+## Interpretation
+
+The product revenue analysis suggests that an important share of  retailer's total revenue is generated via small group of products. Whereas the top performing products are major contributors towards overall sales, suggesting a strong demand and consistent purchasing patterns. However, certain products generate very low revenue, suggesting limited demand or low purchase frequency. Based on the above highlighted findings it is important to focus on high-performing products while reviewing low-performing items for better product pricing, promotion and inventory management.
+
+# Question 2: High-Value Customer Analysis
+
+## Explanation
+
+The task requires to identify the highest-value customers based on their total spending capacity.The total revenue generated from the overall transactions associated with each customer is considered as customer spending.Analysing top customer purchasing pattern for understanding their purchasing behavior.  
+
+## Code
+
+```{r}
+# Total spending by customer
+
+customer_spending <- retail_data %>%
+  filter(!is.na(CustomerID)) %>%
+  group_by(CustomerID) %>%
+  summarise(
+    TotalSpending = sum(Revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(TotalSpending))
+
+# Top 5 highest-spending customers
+
+top5_customers <- customer_spending %>%
+  slice_max(order_by = TotalSpending, n = 5, with_ties = FALSE)
+
+top5_customers
+
+
+# Products purchased by top customers
+
+top_customer_products <- retail_data %>%
+  filter(CustomerID %in% top5_customers$CustomerID) %>%
+  filter(!is.na(Description)) %>%
+  group_by(CustomerID, Description) %>%
+  summarise(
+    TotalQuantity = sum(Quantity, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(CustomerID, desc(TotalQuantity))
+
+top_customer_products
+```
+
+## Visualisation 
+
+```{r}
+ggplot(top5_customers,
+       aes(x = factor(CustomerID),
+           y = TotalSpending)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Top 5 Highest-Spending Customers",
+    x = "Customer ID",
+    y = "Total Spending"
+  ) +
+  theme_minimal()
+```
+
+## Interpretation
+
+The analysis highlights the spending power of top 5 customer who are the major contributors towards the retailer's total revenue.The sales performance is highly influenced by these customers who represent a valuable segment in their business.The understanding of their purchase behavior can help in making better sales strategy.  
+
+# Question 3: Global Market Analysis
+
+## Explanation
+
+The Task requires to perform an analysis showing the sales performance of different countries based on total revenue calculated from the retailer's transaction data.The main objective is to identify the highest-revenue countries and examine the most purchased product in each country for better understanding country-level sales pattern and product demand. 
+
+## Code
+
+```{r}
+# Total revenue by country
+
+country_revenue <- retail_data %>%
+  group_by(Country) %>%
+  summarise(
+    TotalRevenue = sum(Revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(TotalRevenue))
+
+country_revenue
+
+# Top product by quantity in each country
+
+country_top_product <- retail_data %>%
+  filter(!is.na(Description)) %>%
+  group_by(Country, StockCode, Description) %>%
+  summarise(
+    TotalQuantity = sum(Quantity, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  group_by(Country) %>%
+  slice_max(order_by = TotalQuantity, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+country_top_product
+
+# Summary
+
+country_summary <- country_revenue %>%
+  left_join(country_top_product, by = "Country")
+
+country_summary
+```
+
+## Visualisation 
+
+```{r}
+# Top 10 countries by revenue
+
+top10_countries <- country_revenue %>%
+  slice_max(order_by = TotalRevenue, n = 10, with_ties = FALSE)
+
+ggplot(top10_countries,
+       aes(x = reorder(Country, TotalRevenue),
+           y = TotalRevenue)) +
+  geom_col(fill = "skyblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Countries by Revenue",
+    x = "Country",
+    y = "Total Revenue"
+  ) +
+  theme_minimal()
+```
+
+## Interpretation
+
+The results for country level analysis demonstrates that United Kingdom records the highest total revenue, followed by other countries like Netherlands, EIRE, Germany and France, indicating a strong retail sales in major international countries. It is also noticed that product purchase varies across countries, highlighting difference in customer preferences and buying pattern.These findings clearly suggests that it is important to adopt country specific sales and marketing strategies rather than relying on a single global approach. 
+
+# Question 4: Temporal Analysis & Trends
+
+## Explanation
+
+The task focuses on the retailer's revenue over time by analysing total revenue for each month and identify the months with highest sales. It also require identify certain products that repeatedly appear among the lowest performing products across these months.This helps to understand the seasonal sales pattern and consistently weak performing products.  
+
+## Code
+
+```{r}
+# Create year-month variable
+
+retail_data <- retail_data %>%
+  mutate(
+    YearMonth = format(InvoiceDate, "%Y-%m")
+  )
+
+# Monthly revenue summary
+
+monthly_revenue <- retail_data %>%
+  group_by(YearMonth) %>%
+  summarise(
+    TotalRevenue = sum(Revenue, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(YearMonth)
+
+monthly_revenue
+
+# Highest revenue month
+
+highest_revenue_month <- monthly_revenue %>%
+  slice_max(order_by = TotalRevenue, n = 1, with_ties = FALSE)
+
+highest_revenue_month
+
+# Product revenue by month
+
+monthly_product_revenue <- retail_data %>%
+  filter(!is.na(Description)) %>%
+  group_by(YearMonth, StockCode, Description) %>%
+  summarise(
+    TotalRevenue = sum(Revenue, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Bottom 10 products in each month
+
+monthly_bottom10 <- monthly_product_revenue %>%
+  group_by(YearMonth) %>%
+  slice_min(order_by = TotalRevenue, n = 10, with_ties = FALSE) %>%
+  ungroup()
+
+monthly_bottom10
+
+# Products repeatedly appearing in monthly bottom 10
+
+recurring_low_products <- monthly_bottom10 %>%
+  group_by(StockCode, Description) %>%
+  summarise(
+    MonthsInBottom10 = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(MonthsInBottom10))
+
+recurring_low_products
+```
+
+## Visualisation 
+
+```{r}
+# Monthly revenue trend
+
+ggplot(monthly_revenue,
+       aes(x = YearMonth, y = TotalRevenue, group = 1)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(color = "darkblue") +
+  labs(
+    title = "Monthly Revenue Trend",
+    x = "Year-Month",
+    y = "Total Revenue"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Interpretation 
+
+Based on the above visual analysis there is a gradual increase in the monthly revenue during the year 2011, with November reporting the  highest. The analysis suggests a pattern of seasonality, with strong sales towards the end of the year. It also suggests that low performing products appeared more than once in the bottom 10 which indicates an inconsistency in demand over time. This clearly suggest that the retailer should have an inventory plan based around the peak period in their sales pattern while parallelly reviewing low performing products for discontinuation or repricing. 
+
+# Report Conclusion 
+
+The report highlights key analysis of the insights from the UK-based retailer's transactional data.The analysis on product revenue suggests that only a small number of products are contributing to the overall sales. Customer analysis highlighted a limited number of high-value customers contribute towards the substantial revenue for the business. Strong international demand is identified through country level analysis where United Kingdom is contributing the major chunk of the company sales, supported by countries like Netherlands, EIRE, Germany and France, indicating a strong retail sales in major international countries. Finally, seasonal sales pattern is identified through temporal analysis which suggest high sales towards the end of the year. These findings help understand the data and build product strategy, planning and decisions related to marketing and inventory management.
+
+------------------------------------------------------------------------
+
+I confirm that: - I understand all code submitted. - I can explain my
+solution if required.

@@ -1,0 +1,781 @@
+---
+title: "COMP7025 Social Media Intelligence - Assignment"
+author: "Namesh Panneer Selvan (22148363)"
+date: "2026-06-01"
+output: word_document
+---
+
+# Declaration
+By including this statement, we the authors of this work, verify that:
+
+• I hold a copy of this assignment that we can produce if the original is lost or damaged.
+
+• I hereby certify that no part of this assignment/product has been copied from any other student’s work or from any other source (including generative sources) except where due acknowledgement is made in the assignment.
+
+• No part of this assignment/product has been written/produced for us by another person except where
+such collaboration has been authorised by the subject lecturer/tutor concerned.
+
+• I am aware that this work may be reproduced and submitted to plagiarism detection software programs
+for the purpose of detecting possible plagiarism (which may retain a copy on its database for future
+plagiarism checking).
+
+• I hereby certify that we have read and understand what the School of Computer, Data and Mathematical
+Science defines as minor and substantial breaches of misconduct as outlined in the Subject Outline for
+this unit.
+
+# Introduction
+The assignment is based around understanding how social media platforms generate huge volumes of engagement data that can be analysed using social network analysis to understand the patterns of connectivity, influence distribution, user engagement. Bluesky is a social media platform that allows users to create, view and follow different types of contents and participate in online communities through hashtags. 
+
+The report focuses on Bluesky network which is associated with hastag #WSUCOMP7025. It shows how the data is collected using the Bluesky API and then analysed around six different areas. The objective here is to apply social network analysis to real-world media dataset for understanding the data structure, connectivity, account popularity, etc.
+
+# Part 1 - User Gathering 
+
+# Aim
+The section focuses on collecting Bluesky posts containing the hashtag #WSUCOMP7025 and analyse the account creation dates of users who posted this hashtag. 
+
+# Method
+Posts were collected using the `bs_search_posts()` function from the `bskyr` package. The downloaded posts were saved as an `.rds` file so that the same dataset could be reused without repeatedly calling the Bluesky API. Unique author handles were extracted, and each author’s profile was retrieved using `bs_get_profile()`. The account creation dates were then converted into date format and visualised using a histogram.
+
+# Limitation
+This analysis only includes users who posted using the hashtag #WSUCOMP7025, the post limit is set to be 100. 
+
+# Load libraries
+```{r message=FALSE, warning=FALSE}
+library(bskyr)
+library(tidyverse)
+```
+
+# Login to Bluesky
+```{r}
+set_bluesky_user("nameshselvan.bsky.social")
+set_bluesky_pass("PASSWORD_HIDDEN")
+```
+
+```{r eval=FALSE}
+auth <- bs_auth(
+  user = bs_get_user(),
+  pass = bs_get_pass()
+)
+```
+
+# Search posts with hashtag and save
+```{r eval=FALSE}
+# Download posts with hashtag
+posts <- bs_search_posts("#WSUCOMP7025", limit = 100)
+
+# Save posts data
+saveRDS(posts, "posts_data.rds")
+```
+
+# Load the saved dataset
+```{r}
+posts <- readRDS("posts_data.rds")
+```
+
+# Extract author handles only
+```{r}
+authors <- tibble(
+  handle = unique(sapply(posts$author, function(x) x$handle))
+)
+
+authors
+```
+
+# Get full profile details for each author and save
+```{r eval=FALSE}
+profiles <- lapply(authors$handle, function(h) {
+  Sys.sleep(0.5)
+  bs_get_profile(h)
+})
+
+# Save profiles data
+saveRDS(profiles, "profiles_data.rds")
+```
+
+# Load saved profiles data
+```{r}
+profiles <- readRDS("profiles_data.rds")
+```
+
+# Extract creation date from profiles
+```{r}
+authors$created_at <- sapply(profiles, function(x) x$created_at)
+
+# Convert to date format
+authors$created_date <- as.Date(substr(authors$created_at, 1, 10))
+
+authors
+```
+
+# Plot account creation dates
+```{r}
+ggplot(authors, aes(x = created_date)) +
+  geom_bar(fill = "skyblue", color = "black") +
+  labs(
+    title = "Account Creation Dates of Users Posting #WSUCOMP7025",
+    x = "Account Creation Date",
+    y = "Number of Accounts"
+  ) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Save graph
+```{r}
+ggsave("part1_account_creation_histogram.png", width = 9, height = 5)
+```
+
+# Summary for the report
+```{r}
+creation_summary <- authors %>%
+  count(created_date, name = "number_of_accounts") %>%
+  arrange(created_date)
+
+creation_summary
+```
+
+# Interpretation
+The histogram indicates that the majority of accounts were created during April and May 2026, with the highest concentration occurring on 29 April 2026, when 20 accounts were registered. This pattern suggests that many users created Bluesky accounts specifically to participate in the COMP7025 activity associated with the hashtag #WSUCOMP7025 The presence of a small number of older accounts indicates that some participants were already active Bluesky users prior to the assignment. Overall, the results suggest that the hashtag successfully encouraged new user adoption while also engaging existing members of the Bluesky community.
+
+
+# Further Analysis
+Future research could explore whether newer accounts exhibit different posting behaviours compared with more established accounts. Additional engagement metrics, including likes, reposts, comments and follower counts, could also be analysed to provide a more comprehensive understanding of user activity and participation within the #WSUCOMP7025 community.
+ 
+
+# Part 2 – Following Graph
+
+# Aim
+The aim of this section is to construct a directed following graph using the Bluesky users who posted with #WSUCOMP7025 and the accounts they follow.
+
+# Method
+For each author identified in Part 1, the accounts they follow were retrieved using bs_get_follows(). A directed edge was created from each author to each account they follow. The edge list was saved as an .rds file and then used to construct a directed graph using the igraph package.
+
+# Limitation
+The following graph only captures publicly visible following relationships at the time of data collection. Private accounts and subsequent changes in following behaviour are not represented.
+
+# Load Required Libraries
+```{r message=FALSE, warning=FALSE}
+library(igraph)
+library(tidyverse)
+```
+
+# Retrieve Following Relationships
+```{r eval=FALSE}
+# Create empty edge list
+edges <- data.frame(
+  from = character(),
+  to = character(),
+  stringsAsFactors = FALSE
+)
+
+for(h in authors$handle){
+
+  cat("Processing:", h, "\n")
+
+  try({
+
+    follows <- bs_get_follows(h)
+
+    if(nrow(follows) > 0){
+
+      temp_edges <- data.frame(
+        from = h,
+        to = follows$handle,
+        stringsAsFactors = FALSE
+      )
+
+      edges <- rbind(edges, temp_edges)
+    }
+
+    Sys.sleep(0.5)
+
+  }, silent = TRUE)
+
+}
+```
+
+# Save Following Data
+```{r eval=FALSE}
+saveRDS(edges, "following_data.rds")
+```
+
+# Load Following Data
+```{r}
+edges <- readRDS("following_data.rds")
+```
+
+# Construct Directed Graph
+```{r}
+library(igraph)
+
+g <- graph_from_data_frame(
+  d = edges,
+  directed = TRUE
+)
+```
+
+# Graph summary 
+```{r}
+summary(g)
+```
+
+
+# Connected Components
+```{r}
+comp <- components(g)
+
+summary <- tibble(
+  Nodes = vcount(g),
+  Edges = ecount(g),
+  Components = comp$no,
+  Largest_Component_Size = max(comp$csize)
+)
+
+summary
+```
+# Size of components 
+```{r}
+comp$csize
+```
+
+# Largest Component
+```{r}
+largest_id <- which.max(comp$csize)
+
+largest_nodes <- V(g)[
+  comp$membership == largest_id
+]
+
+largest_graph <- induced_subgraph(
+  g,
+  largest_nodes
+)
+```
+
+# Graph Visualisation
+```{r}
+plot(
+  largest_graph,
+  vertex.size = 5,
+  vertex.label = NA,
+  edge.arrow.size = 0.2,
+  main = "Largest Connected Component"
+)
+```
+
+# Save graph 
+```{r}
+png(
+  "part2_largest_component.png",
+  width = 1200,
+  height = 900
+)
+
+plot(
+  largest_graph,
+  vertex.size = 5,
+  vertex.label = NA,
+  edge.arrow.size = 0.2,
+  main = "Largest Connected Component"
+)
+
+dev.off()
+```
+
+# Interpretation
+The following network consisted of 264 nodes and 565 directed edges, representing a moderately connected Bluesky community. Component analysis showed that all nodes belonged to a single connected component, indicating that users were linked either directly or indirectly through following relationships. The network visualisation revealed a dense central core with several peripheral nodes, suggesting the presence of key accounts that facilitate connections across different parts of the network. The existence of a single connected component also implies that information can potentially reach the entire community through the network structure, highlighting a high level of overall connectivity and integration among users.
+
+# Further Analysis
+Future analysis could explore the presence of subgroups within the network and examine whether users form distinct communities based on their connection patterns and interactions. This may provide additional insights into the overall structure and organisation of the Bluesky network.
+
+# Part 3 – Graph Statistics
+
+# Aim 
+The aim of this section is to analyse the structural properties of the largest connected component of the Bluesky following network. Network statistics including diameter, density, degree distribution and power law coefficient are calculated to understand the connectivity and complexity of the network.
+
+# Method
+The largest connected component identified in Part 2 was converted into an undirected graph. Several network statistics were then calculated using the igraph package, including graph diameter, density, degree distribution and power law coefficient.
+
+# Limitation
+The graph statistics are calculated from a single snapshot of the network and may change as users create or remove following relationships.
+
+# Convert to Undirected Graph
+```{r}
+# Convert largest component to undirected graph
+largest_graph_undirected <- as_undirected(largest_graph, mode = "collapse")
+```
+
+# Calculate Diameter
+```{r}
+diameter_value <- diameter(
+  largest_graph_undirected
+)
+
+diameter_value
+```
+
+# Calculate Density
+```{r}
+density_value <- edge_density(
+  largest_graph_undirected
+)
+
+density_value
+```
+
+# Degree Distribution
+```{r}
+degree_values <- degree(
+  largest_graph_undirected
+)
+```
+
+# Log-log degree distribution plot
+```{r}
+degree_table <- as.data.frame(table(degree_values))
+colnames(degree_table) <- c("Degree", "Frequency")
+
+degree_table$Degree <- as.numeric(as.character(degree_table$Degree))
+degree_table$Frequency <- as.numeric(degree_table$Frequency)
+
+degree_table <- degree_table[
+  degree_table$Degree > 0 & degree_table$Frequency > 0,
+]
+
+ggplot(degree_table, aes(x = Degree, y = Frequency)) +
+  geom_point() +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    title = "Log-Log Degree Distribution",
+    x = "Degree (log scale)",
+    y = "Frequency (log scale)"
+  ) +
+  theme_minimal()
+
+ggsave("part3_loglog_degree_distribution.png", width = 8, height = 5)
+```
+
+
+# Plot Degree Distribution
+```{r}
+hist(
+  degree_values,
+  main = "Degree Distribution",
+  xlab = "Degree",
+  ylab = "Frequency",
+  col = "skyblue"
+)
+```
+
+# Save graph 
+```{r}
+png(
+  "part3_degree_distribution.png",
+  width = 1000,
+  height = 800
+)
+
+hist(
+  degree_values,
+  main = "Degree Distribution",
+  xlab = "Degree",
+  ylab = "Frequency",
+  col = "skyblue"
+)
+
+dev.off()
+```
+
+# Power Law Coefficient
+```{r}
+power_law <- fit_power_law(
+  degree_values + 1
+)
+
+power_law
+```
+
+# Extracting alpha
+```{r}
+alpha_value <- power_law$alpha
+
+alpha_value
+```
+
+# Summary table 
+```{r}
+graph_statistics <- data.frame(
+  Metric = c("Diameter", "Density", "Power Law Alpha"),
+  Value = round(c(diameter_value, density_value, alpha_value), 4)
+)
+
+graph_statistics
+```
+
+# Interpretation
+The largest connected component was converted into an undirected network for statistical analysis. The network diameter was 5, meaning the longest shortest path between any two nodes is five steps. The density was 0.0147, showing that only a small proportion of all possible connections are present. This suggests the network is sparse, which is common in social networks where users connect selectively. The degree distribution is skewed, with most accounts having few connections and a small number having many connections. The estimated power law coefficient was 2.4442. This value falls within the range commonly observed in scale-free networks and suggests that a small number of highly connected hub accounts dominate connectivity while most users maintain relatively few connections.
+
+# Further Analysis
+Future analysis could further explore how users are connected within the network and identify patterns that may provide a deeper understanding of user interactions, influence, and the overall structure of the Bluesky community.
+
+# Part 4 - Investigating Homophily
+
+# Aim
+The aim of this section is to test whether accounts with the same handle suffix are more likely to be connected in the Bluesky following graph.
+
+# Method
+The suffix of each account handle was extracted and added as a vertex attribute. Homophily was tested by comparing connected accounts with the same suffix against connected accounts with different suffixes.
+
+# Extract suffix from handle
+```{r}
+get_suffix <- function(handle) {
+  parts <- strsplit(handle, "\\.")[[1]]
+  paste0(".", tail(parts, 1))
+}
+
+V(largest_graph_undirected)$suffix <- sapply(
+  V(largest_graph_undirected)$name,
+  get_suffix
+)
+```
+
+# Check suffix distribution
+```{r}
+suffix_table <- table(V(largest_graph_undirected)$suffix)
+
+suffix_table
+```
+
+# Get edge list from undirected graph
+```{r}
+edge_list <- as_data_frame(
+  largest_graph_undirected,
+  what = "edges"
+)
+```
+
+# Add suffix of from and to nodes
+```{r}
+edge_list$from_suffix <- V(largest_graph_undirected)$suffix[
+  match(edge_list$from, V(largest_graph_undirected)$name)
+]
+
+edge_list$to_suffix <- V(largest_graph_undirected)$suffix[
+  match(edge_list$to, V(largest_graph_undirected)$name)
+]
+
+# Check whether both ends have same suffix
+edge_list$same_suffix <- edge_list$from_suffix == edge_list$to_suffix
+
+suffix_factor <- as.factor(V(largest_graph_undirected)$suffix)
+
+assortativity_result <- assortativity_nominal(
+  largest_graph_undirected,
+  types = as.integer(suffix_factor),
+  directed = FALSE
+)
+
+assortativity_result
+
+#The assortativity coefficient was 0.0268. Although positive, the value is relatively small, indicating weak homophily based on account suffix. This suggests that while users show some tendency to connect with accounts sharing the same suffix, cross-suffix connections remain common.
+```
+
+
+# Count same suffix vs different suffix links
+```{r}
+homophily_table <- table(edge_list$same_suffix)
+
+homophily_table
+```
+
+# Proportion of same suffix links
+```{r}
+same_suffix_proportion <- mean(edge_list$same_suffix)
+
+same_suffix_proportion
+
+# Expected same-suffix proportion under random mixing
+suffix_counts <- table(V(largest_graph_undirected)$suffix)
+suffix_prob <- suffix_counts / sum(suffix_counts)
+
+expected_same_suffix <- sum(suffix_prob^2)
+
+homophily_comparison <- data.frame(
+  Metric = c(
+    "Observed same-suffix proportion",
+    "Expected same-suffix proportion under random mixing"
+  ),
+  Value = round(c(same_suffix_proportion, expected_same_suffix), 4)
+)
+
+homophily_comparison
+
+# Summary 
+homophily_summary <- data.frame(
+  Metric = c("Same Suffix Links", "Different Suffix Links", "Same Suffix Percentage"),
+  Value = c(
+    sum(edge_list$same_suffix),
+    sum(!edge_list$same_suffix),
+    round(mean(edge_list$same_suffix) * 100, 1)
+  )
+)
+
+homophily_summary
+```
+
+# Mixing matrix by suffix
+```{r}
+mixing_matrix <- table(
+  edge_list$from_suffix,
+  edge_list$to_suffix
+)
+
+mixing_matrix
+```
+
+# Optional: plot suffix distribution
+```{r}
+barplot(
+  suffix_table,
+  main = "Distribution of Account Handle Suffixes",
+  xlab = "Handle Suffix",
+  ylab = "Number of Accounts",
+  las = 2
+)
+
+png(
+  "part4_suffix_distribution.png",
+  width = 1000,
+  height = 800
+)
+
+barplot(
+  suffix_table,
+  main = "Distribution of Account Handle Suffixes",
+  xlab = "Handle Suffix",
+  ylab = "Number of Accounts",
+  las = 2
+)
+
+dev.off()
+```
+
+
+# Interpretation
+The observed same-suffix connection rate was 67.7%. However, because .social accounts made up the majority of the network, a high same-suffix rate could occur naturally under random mixing. Therefore, the observed value was compared with the expected same-suffix proportion under random mixing. The assortativity coefficient was positive but small, indicating that suffix-based homophily exists only weakly. Overall, the result provides limited evidence of homophily, while also showing that many connections occur across different suffix groups.
+
+# Further Analysis
+Future work could investigate whether homophily also exists with respect to account age, posting frequency or content type.
+
+# Part 5 – Account Popularity
+
+# Aim 
+The aim of this section is to measure the popularity of Bluesky accounts using the Scaled PageRank algorithm. The ten most popular accounts are identified and their PageRank scores are compared with their network degree.
+
+# Method 
+PageRank was calculated on the largest component of the Bluesky network using a damping factor of α = 0.8. The resulting PageRank scores were used to rank accounts according to their importance in the network. Degree values were then compared against PageRank scores to investigate whether highly connected accounts were also highly influential.
+
+# Limitation
+PageRank was calculated using a static network snapshot and does not account for future changes in user relationships.
+
+# Calculate PageRank
+```{r}
+pagerank_result <- page_rank(
+  largest_graph,
+  damping = 0.8
+)
+```
+
+# Extract PageRank Scores
+```{r}
+pagerank_scores <- data.frame(
+  Account = names(pagerank_result$vector),
+  PageRank = pagerank_result$vector
+)
+```
+
+# Calculate Degree
+```{r}
+degree_scores <- degree(largest_graph)
+
+degree_df <- data.frame(Account = names(degree_scores), Degree = degree_scores)
+```
+
+# Combine Results
+```{r}
+popularity_df <- merge(
+  pagerank_scores,
+  degree_df,
+  by = "Account"
+)
+```
+
+# Top 10 Most Popular Accounts
+```{r}
+top10_accounts <- popularity_df %>%
+  arrange(desc(PageRank)) %>%
+  slice(1:10) %>%
+  mutate(PageRank = round(PageRank, 4))
+
+top10_accounts
+
+# Save the table
+write.csv(
+  top10_accounts,
+  "part5_top10_accounts.csv",
+  row.names = FALSE
+)
+```
+
+# Visualise Top 10 Accounts
+```{r}
+library(ggplot2)
+
+ggplot(
+  top10_accounts,
+  aes(
+    x = reorder(Account, PageRank),
+    y = PageRank
+  )
+) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Top 10 Accounts by PageRank",
+    x = "Account",
+    y = "PageRank Score"
+  ) +
+  theme_minimal()
+
+# Save plot
+ggsave(
+  "part5_pagerank_top10.png",
+  width = 10,
+  height = 6
+)
+```
+
+# Correlation Between Degree and PageRank
+```{r}
+correlation <- round(
+  cor(popularity_df$Degree, popularity_df$PageRank),
+  4
+)
+
+correlation
+
+#The correlation coefficient of 0.4139 indicates a moderate positive relationship between degree and PageRank. Accounts with more connections tend to be influential, but influence is also affected by the quality of those connections.
+```
+
+# Interpretation
+PageRank was used to evaluate the influence of accounts within the Bluesky network. The highest PageRank score observed was 0.0643, indicating the presence of highly influential accounts within the community. The correlation between degree and PageRank was 0.4139, suggesting a moderate positive relationship between the number of connections and overall influence. However, the results indicate that influence is not determined solely by the quantity of connections but also by the importance of the accounts providing those connections. Consequently, PageRank offers a more comprehensive measure of influence than degree alone.
+
+# Further Analysis
+Future analysis could explore additional approaches for identifying influential users and compare the results to gain a broader understanding of how influence is distributed across the Bluesky network.
+
+# Part 6 - Account Selection
+
+# Aim
+The aim of this section is to determine the mixed-strategy Nash Equilibrium for .social and .com accounts when choosing between Advertising and Information posts.
+
+# Method
+The payoff matrix provided in the assignment is used to calculate the mixed-strategy Nash Equilibrium.
+
+Let:
+
+p = probability that .com accounts choose Advertising
+1−p = probability that .com accounts choose Information
+q = probability that .social accounts choose Advertising
+1−q = probability that .social accounts choose Information
+
+At equilibrium, each player must be indifferent between their available strategies.
+
+# Limitation
+The analysis assumes that account behaviour is influenced solely by the payoff matrix and does not consider external factors such as user preferences or platform incentives.
+
+# Payoff Matrix
+```{r}
+payoff_matrix <- matrix(
+  c("0.9, 0.7", "0.4, 0.3",
+    "0.2, 0.2", "0.6, 0.6"),
+  nrow = 2,
+  byrow = TRUE
+)
+
+rownames(payoff_matrix) <- c(".social Advertising", ".social Information")
+colnames(payoff_matrix) <- c(".com Advertising", ".com Information")
+
+payoff_matrix
+```
+
+# Solve for q (.social Advertising Probability)
+```{r}
+q <- (0.6 - 0.2) /
+     (0.9 - 0.2 - 0.4 + 0.6)
+
+q
+```
+
+# Solve for p (.com Advertising Probability)
+```{r}
+p <- (0.6 - 0.3) /
+     (0.7 - 0.3 - 0.2 + 0.6)
+
+p
+```
+
+# Equilibrium Results
+```{r}
+equilibrium <- data.frame(
+  Account_Type = c(".com", ".social"),
+  Advertising = round(c(p, q), 4),
+  Information = round(c(1 - p, 1 - q), 4)
+)
+
+equilibrium
+```
+
+# Visualisation
+```{r}
+library(tidyr)
+library(ggplot2)
+
+equilibrium_long <- pivot_longer(
+  equilibrium,
+  cols = c(Advertising, Information),
+  names_to = "Strategy",
+  values_to = "Probability"
+)
+
+ggplot(
+  equilibrium_long,
+  aes(
+    x = Account_Type,
+    y = Probability,
+    fill = Strategy
+  )
+) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Mixed Strategy Nash Equilibrium",
+    x = "Account Type",
+    y = "Probability"
+  ) +
+  theme_minimal()
+```
+
+# Interpretation
+The mixed-strategy Nash Equilibrium suggests that .com accounts should choose Advertising with a probability of 0.375 and Information with a probability of 0.625, while .social accounts should choose Advertising with a probability of 0.4444 and Information with a probability of 0.5556. These results indicate that neither account type can improve its expected outcome by changing its strategy independently. Overall, the findings suggest that a balanced approach to advertising and information sharing is more beneficial than relying heavily on a single content strategy, contributing to a more diverse and engaging network environment.
+
+# Further Analysis
+Future analysis could explore how different assumptions or conditions influence user behaviour and whether alternative content-sharing patterns emerge within the network.
+
+# Conclusion 
+This report examined the Bluesky network associated with #WSUCOMP7025 using a range of social network analysis techniques. The findings showed that many accounts were created recently, the network was highly connected through a single main component, and user connections exhibited characteristics commonly observed in social media networks. The analysis also identified patterns in user interactions, highlighted influential accounts within the network, and explored content-sharing behaviour through a game-theoretic perspective. Overall, the results provide valuable insights into the structure, connectivity, and behaviour of users within the Bluesky community, demonstrating the practical application of social network analysis to real-world social media data.
+
+
+
+
+

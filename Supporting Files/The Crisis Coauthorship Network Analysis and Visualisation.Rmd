@@ -1,0 +1,523 @@
+---
+title: "Assignment 1 - Visualisation"
+author: "Namesh Panneer Selvan (22148363)"
+date: "2026-07-24"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+# DECLARATION
+I hold a copy of this assignment that I can produce if the original is lost or damaged. 
+
+I hereby certify that no part of this assignment/product has been copied from any other student’s work or from any other source except where due acknowledgement is made in the assignment.
+
+No part of this assignment/product has been written/produced for me by another person except
+where such collaboration has been authorised by the subject lecturer/tutor concerned.
+
+# 1. Required Packages
+```{r}
+required_packages <- c(
+  "igraph", "visNetwork", "ggraph", "ggplot2",
+  "dplyr", "readr", "htmlwidgets", "scales"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  install.packages(missing_packages)
+}
+
+library(igraph)
+library(visNetwork)
+library(ggraph)
+library(ggplot2)
+library(dplyr)
+library(readr)
+library(htmlwidgets)
+library(scales)
+
+set.seed(42)
+```
+
+# 2. Load and validate data
+```{r}
+nodes_file <- "crisis-nodes.csv"
+edges_file <- "crisis-edges.csv"
+
+if (!file.exists(nodes_file) || !file.exists(edges_file)) {
+  stop(
+    "The files 'crisis-nodes.csv' and 'crisis-edges.csv' must be in the working directory."
+  )
+}
+
+nodes_raw <- read_csv(nodes_file, show_col_types = FALSE)
+edges_raw <- read_csv(edges_file, show_col_types = FALSE)
+
+required_node_columns <- c("Id", "Label")
+required_edge_columns <- c("Source", "Target", "Weight")
+
+if (!all(required_node_columns %in% names(nodes_raw))) {
+  stop("The node file must contain the columns: Id and Label.")
+}
+
+if (!all(required_edge_columns %in% names(edges_raw))) {
+  stop("The edge file must contain the columns: Source, Target and Weight.")
+}
+
+nodes <- nodes_raw %>%
+  transmute(
+    name = as.character(Id),
+    label = as.character(Label),
+    type = if ("d1" %in% names(nodes_raw)) as.character(d1) else "author"
+  ) %>%
+  filter(!is.na(name), name != "") %>%
+  distinct(name, .keep_all = TRUE)
+
+edges <- edges_raw %>%
+  transmute(
+    from = as.character(Source),
+    to = as.character(Target),
+    weight = suppressWarnings(as.numeric(Weight))
+  ) %>%
+  filter(
+    !is.na(from), from != "",
+    !is.na(to), to != "",
+    from != to
+  ) %>%
+  mutate(weight = if_else(is.na(weight) | weight <= 0, 1, weight)) %>%
+  group_by(from, to) %>%
+  summarise(weight = sum(weight), .groups = "drop")
+
+unknown_vertices <- setdiff(unique(c(edges$from, edges$to)), nodes$name)
+if (length(unknown_vertices) > 0) {
+  warning(
+    "Some edge endpoints were not present in the node file and were added automatically: ",
+    paste(unknown_vertices, collapse = ", ")
+  )
+  nodes <- bind_rows(
+    nodes,
+    tibble(name = unknown_vertices, label = unknown_vertices, type = "author")
+  )
+}
+
+cat("Loaded", nrow(nodes), "nodes and", nrow(edges), "unique edges.\n")
+
+```
+
+# 3. Build the undirected weighted graph
+```{r}
+g <- graph_from_data_frame(
+  d = edges,
+  directed = FALSE,
+  vertices = nodes
+)
+
+g <- simplify(
+  g,
+  remove.multiple = TRUE,
+  remove.loops = TRUE,
+  edge.attr.comb = list(weight = "sum", "ignore")
+)
+
+# Edge weight represents collaboration strength. For weighted shortest-path
+# measures, stronger ties should correspond to shorter distances.
+E(g)$distance <- 1 / E(g)$weight
+```
+
+# 4. Network metrics
+```{r}
+V(g)$degree <- degree(g, mode = "all")
+V(g)$weighted_degree <- strength(g, mode = "all", weights = E(g)$weight)
+
+# Unweighted measures are easier to interpret for this assignment.
+V(g)$betweenness <- betweenness(g, directed = FALSE, normalized = TRUE)
+V(g)$closeness <- closeness(g, normalized = TRUE)
+V(g)$eigenvector <- eigen_centrality(g, directed = FALSE, weights = E(g)$weight)$vector
+
+# Weighted alternatives, using inverse collaboration strength as distance.
+V(g)$weighted_betweenness <- betweenness(
+  g,
+  directed = FALSE,
+  weights = E(g)$distance,
+  normalized = TRUE
+)
+V(g)$weighted_closeness <- closeness(
+  g,
+  weights = E(g)$distance,
+  normalized = TRUE
+)
+
+# Louvain requires an undirected graph and positive edge weights.
+community_model <- cluster_louvain(g, weights = E(g)$weight)
+V(g)$community <- membership(community_model)
+
+network_summary <- tibble(
+  metric = c(
+    "Nodes", "Edges", "Density", "Components", "Average path length",
+    "Diameter", "Global clustering coefficient", "Communities", "Modularity"
+  ),
+  value = c(
+    vcount(g),
+    ecount(g),
+    round(edge_density(g, loops = FALSE), 4),
+    components(g)$no,
+    round(mean_distance(g, directed = FALSE), 3),
+    diameter(g, directed = FALSE),
+    round(transitivity(g, type = "global"), 3),
+    length(community_model),
+    round(modularity(community_model), 3)
+  )
+)
+
+print(network_summary)
+write_csv(network_summary, "crisis_network_summary.csv")
+
+metrics <- tibble(
+  author = V(g)$label,
+  degree = V(g)$degree,
+  weighted_degree = V(g)$weighted_degree,
+  betweenness = V(g)$betweenness,
+  closeness = V(g)$closeness,
+  eigenvector = V(g)$eigenvector,
+  weighted_betweenness = V(g)$weighted_betweenness,
+  weighted_closeness = V(g)$weighted_closeness,
+  community = V(g)$community
+) %>%
+  arrange(desc(degree), desc(weighted_degree))
+
+cat("\nTop 10 authors by degree centrality:\n")
+print(metrics %>% select(author, degree, weighted_degree, betweenness, community) %>% head(10))
+
+cat("\nTop 10 authors by betweenness centrality:\n")
+print(
+  metrics %>%
+    arrange(desc(betweenness)) %>%
+    select(author, degree, weighted_degree, betweenness, community) %>%
+    head(10)
+)
+
+write_csv(metrics, "crisis_metrics.csv")
+```
+
+# 5. Interactive network visualisation
+```{r}
+community_palette <- c(
+  "#4E79A7", "#59A14F", "#E15759", "#F1CE63",
+  "#B07AA1", "#76B7B2", "#FF9DA7", "#9C755F"
+)
+
+vertex_table <- igraph::as_data_frame(
+  g,
+  what = "vertices"
+)
+
+edge_table <- igraph::as_data_frame(
+  g,
+  what = "edges"
+)
+
+vis_nodes <- vertex_table %>%
+  transmute(
+    id = name,
+    label = label,
+    value = degree,
+    group = as.character(community),
+    title = paste0(
+      "<b>", label, "</b>",
+      "<br>Degree: ", degree,
+      "<br>Weighted degree: ", round(weighted_degree, 1),
+      "<br>Betweenness: ", round(betweenness, 4),
+      "<br>Eigenvector centrality: ", round(eigenvector, 4),
+      "<br>Community: ", community
+    )
+  )
+
+vis_edges <- edge_table %>%
+  transmute(
+    from = from,
+    to = to,
+    value = weight,
+    title = paste0("Collaboration weight: ", weight)
+  )
+
+interactive_network <- visNetwork(
+  vis_nodes,
+  vis_edges,
+  main = "The Crisis Co-authorship Network",
+  width = "100%",
+  height = "800px"
+) %>%
+  visIgraphLayout(layout = "layout_with_fr") %>%
+  visGroups(groupname = "1", color = community_palette[1]) %>%
+  visGroups(groupname = "2", color = community_palette[2]) %>%
+  visGroups(groupname = "3", color = community_palette[3]) %>%
+  visGroups(groupname = "4", color = community_palette[4]) %>%
+  visGroups(groupname = "5", color = community_palette[5]) %>%
+  visNodes(
+    scaling = list(min = 8, max = 45),
+    font = list(size = 14, face = "Arial")
+  ) %>%
+  visEdges(
+    color = list(color = "#CCCCCC", highlight = "#333333"),
+    scaling = list(min = 1, max = 8),
+    smooth = FALSE
+  ) %>%
+  visOptions(
+    highlightNearest = list(enabled = TRUE, degree = 1, hover = TRUE),
+    nodesIdSelection = list(enabled = TRUE, useLabels = TRUE),
+    selectedBy = list(variable = "group", multiple = TRUE)
+  ) %>%
+  visInteraction(
+    navigationButtons = TRUE,
+    keyboard = TRUE,
+    tooltipDelay = 100,
+    hover = TRUE
+  ) %>%
+  visPhysics(stabilization = list(enabled = TRUE, iterations = 1000)) %>%
+  visLayout(randomSeed = 42)
+
+visSave(
+  interactive_network,
+  file = "crisis_interactive.html",
+  selfcontained = TRUE
+)
+```
+
+# 6. Static network overview
+```{r}
+network_plot <- ggraph(g, layout = "fr") +
+  geom_edge_link(
+    aes(width = weight),
+    colour = "grey80",
+    alpha = 0.65,
+    show.legend = FALSE
+  ) +
+  geom_node_point(
+    aes(size = degree, colour = factor(community)),
+    alpha = 0.95
+  ) +
+  geom_node_text(
+    aes(label = ifelse(degree >= 15, label, "")),
+    repel = TRUE,
+    size = 3.2,
+    colour = "black"
+  ) +
+  scale_edge_width(range = c(0.2, 2.5)) +
+  scale_size_continuous(range = c(2, 14), name = "Degree") +
+  scale_colour_manual(
+    values = community_palette,
+    name = "Community"
+  ) +
+  labs(
+    title = "The Crisis Co-authorship Network",
+    subtitle = "Node size represents degree; colour represents Louvain community"
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "right"
+  )
+
+ggsave(
+  filename = "fig_network_overview.png",
+  plot = network_plot,
+  width = 11,
+  height = 8,
+  dpi = 300,
+  bg = "white"
+)
+
+```
+
+# 7. Top 15 authors by degree
+```{r}
+# Top 15 authors by degree
+top_15 <- metrics %>%
+  arrange(desc(degree), desc(weighted_degree)) %>%
+  slice_head(n = 15) %>%
+  mutate(
+    community = factor(community),
+    author = factor(author, levels = rev(author))
+  )
+
+print(top_15 %>% select(author, degree, community))
+
+top_degree_plot <- ggplot(
+  top_15,
+  aes(x = author, y = degree, fill = community)
+) +
+  geom_col(width = 0.8) +
+  geom_text(
+    aes(label = degree),
+    hjust = -0.15,
+    size = 3.5
+  ) +
+  coord_flip(clip = "off") +
+  scale_fill_manual(
+    values = community_palette[seq_len(nlevels(top_15$community))],
+    name = "Community"
+  ) +
+  scale_y_continuous(
+    limits = c(0, max(top_15$degree) * 1.12),
+    breaks = scales::pretty_breaks()
+  ) +
+  labs(
+    title = "Top 15 Authors by Degree Centrality",
+    subtitle = "Higher degree indicates collaboration with more authors",
+    x = NULL,
+    y = "Degree"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    panel.grid.major.y = element_blank(),
+    legend.position = "right",
+    plot.margin = margin(5.5, 20, 5.5, 5.5)
+  )
+
+print(top_degree_plot)
+
+ggsave(
+  "fig_top_degree.png",
+  plot = top_degree_plot,
+  width = 10,
+  height = 7,
+  dpi = 300,
+  bg = "white"
+)
+```
+
+# 8. Adjacency matrix visualisation
+```{r}
+# A second, contrasting representation of the SAME network.
+
+# Only dependency is `g` with its degree and community attributes (Section 4).
+ 
+# --- Subset to the most connected authors ---------------------------------
+# A full 96x96 matrix with readable labels will not fit on a report page.
+# The top 25 by degree keeps every community represented and legible.
+top_n_authors <- 25
+keep_idx <- order(V(g)$degree, decreasing = TRUE)[seq_len(min(top_n_authors, vcount(g)))]
+gs <- induced_subgraph(g, keep_idx)
+
+# --- Order rows and columns by community, then degree ----------------------
+# THIS IS THE ANALYTICAL STEP. An arbitrarily ordered matrix looks like noise;
+# ordering by community pushes dense blocks onto the diagonal, so the structure
+# the force-directed layout found reappears as visible squares.
+ord        <- order(V(gs)$community, -V(gs)$degree)
+lev        <- V(gs)$label[ord]
+comm_order <- V(gs)$community[ord]
+ 
+# --- Weighted adjacency matrix in long format ------------------------------
+adj <- as_adjacency_matrix(gs, attr = "weight", sparse = FALSE)
+dimnames(adj) <- list(V(gs)$label, V(gs)$label)
+ 
+adj_long <- as.data.frame(as.table(adj)) %>%
+  rename(author_x = Var1, author_y = Var2, weight = Freq) %>%
+  mutate(
+    author_x = factor(as.character(author_x), levels = lev),
+    author_y = factor(as.character(author_y), levels = rev(lev)),
+    # NA leaves non-collaborations blank rather than shading them as "zero"
+    weight   = ifelse(weight == 0, NA_real_, weight)
+  )
+
+# --- Community boundaries as separator lines -------------------------------
+boundaries <- cumsum(rle(comm_order)$lengths)
+boundaries <- boundaries[-length(boundaries)]
+ 
+# --- Plot -------------------------------------------------------------------
+matrix_plot <- ggplot(adj_long, aes(x = author_x, y = author_y, fill = weight)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  geom_vline(xintercept = boundaries + 0.5, colour = "grey25", linewidth = 0.6) +
+  geom_hline(yintercept = length(lev) - boundaries + 0.5,
+             colour = "grey25", linewidth = 0.6) +
+  scale_fill_gradient(
+    low = "#DCE9F5", high = "#1F4E79",
+    na.value = "grey96", name = "Collaboration\nweight"
+  ) +
+  coord_fixed() +
+  labs(
+    title    = "Adjacency Matrix of the Top 25 Contributors",
+    subtitle = "Rows and columns ordered by Louvain community, then degree;\ndark lines mark community boundaries",
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title      = element_text(face = "bold", size = 15),
+    plot.subtitle   = element_text(size = 10),
+    axis.text.x     = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+    axis.text.y     = element_text(size = 8),
+    panel.grid      = element_blank(),
+    legend.position = "right"
+  )
+ 
+print(matrix_plot)
+ 
+ggsave("fig_adjacency_matrix.png", matrix_plot,
+       width = 9, height = 8, dpi = 300, bg = "white")
+
+```
+
+# 9. Adjacency matrix, alphabetically ordered (for comparison)
+```{r}
+# Renders the SAME data unordered. Showing both proves that structure in a
+# matrix view comes from the seriation, not the data - a strong point for the
+# "comparison with other methods" section of the report.
+ 
+adj_unordered <- adj_long %>%
+  mutate(
+    author_x = factor(as.character(author_x), levels = sort(lev)),
+    author_y = factor(as.character(author_y), levels = rev(sort(lev)))
+  )
+ 
+matrix_unordered_plot <- ggplot(adj_unordered,
+                                aes(x = author_x, y = author_y, fill = weight)) +
+  geom_tile(colour = "white", linewidth = 0.4) +
+  scale_fill_gradient(low = "#DCE9F5", high = "#1F4E79",
+                      na.value = "grey96", name = "Collaboration\nweight") +
+  coord_fixed() +
+  labs(
+    title    = "The Same Matrix, Ordered Alphabetically",
+    subtitle = "Without community-based ordering the block structure disappears",
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 15),
+    plot.subtitle = element_text(size = 10),
+    axis.text.x   = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 8),
+    axis.text.y   = element_text(size = 8),
+    panel.grid    = element_blank()
+  )
+ 
+print(matrix_unordered_plot)
+ 
+ggsave("fig_adjacency_unordered.png", matrix_unordered_plot,
+       width = 9, height = 8, dpi = 300, bg = "white")
+
+```
+
+# Adjacency matrix for Comparison side-by-side
+```{r}
+# install.packages("patchwork")
+library(patchwork)
+
+combined_matrix <- (
+  matrix_plot        + labs(title = "(a) Ordered by Louvain community", subtitle = NULL) +
+  matrix_unordered_plot + labs(title = "(b) Ordered alphabetically",   subtitle = NULL)
+) &
+  theme(plot.title  = element_text(face = "bold", size = 13),
+        axis.text   = element_text(size = 6),
+        legend.position = "right")
+
+combined_matrix <- combined_matrix + plot_layout(guides = "collect")
+
+ggsave("fig_matrix_comparison.png", combined_matrix,
+       width = 15, height = 7.5, dpi = 300, bg = "white")
+
+```
+
