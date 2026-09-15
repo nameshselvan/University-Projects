@@ -2,7 +2,7 @@
 
 **Namesh Selvan | Western Sydney University**
 
-A collection of assignments and projects from my Master’s in Business Analytics, showcasing practical skills in data analysis, financial modelling, data visualisation and business problem-solving.
+A collection of projects from my Master’s in Business Analytics, showcasing practical skills in data analysis, financial modelling, data visualisation and business problem-solving.
 
 ## Tools
 
